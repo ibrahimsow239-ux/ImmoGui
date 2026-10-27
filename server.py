@@ -25,6 +25,8 @@ def connect():
 
 with connect() as db:
     db.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, salt TEXT NOT NULL, password TEXT NOT NULL, data TEXT NOT NULL)')
+    if 'role' not in {row[1] for row in db.execute('PRAGMA table_info(users)')}:
+        db.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'partner'")
     db.execute('CREATE TABLE IF NOT EXISTS auth_attempts (key TEXT, created INTEGER)')
     db.execute('CREATE INDEX IF NOT EXISTS auth_attempts_lookup ON auth_attempts(key,created)')
     db.execute('CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), expires INTEGER NOT NULL)')
@@ -52,7 +54,7 @@ class Handler(SimpleHTTPRequestHandler):
         except (KeyError, ValueError):
             return None
         with connect() as db:
-            return db.execute('SELECT users.id, name, email, data FROM sessions JOIN users ON users.id=sessions.user_id WHERE token=? AND expires>?', (hashlib.sha256(token.encode()).hexdigest(), time.time())).fetchone()
+            return db.execute('SELECT users.id, name, email, data, role FROM sessions JOIN users ON users.id=sessions.user_id WHERE token=? AND expires>?', (hashlib.sha256(token.encode()).hexdigest(), time.time())).fetchone()
 
     def do_HEAD(self):
         if self.path.split('?')[0] not in ('/', '/index.html', '/app.js', '/style.css', '/auth.js', '/assets/residence-immogui.jpg', '/assets/maisons-locatives.jpg'):
@@ -62,9 +64,18 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/api/health':
             return self.reply(200, {'ok': True})
+        if self.path == '/api/admin/users':
+            user = self.user()
+            if not user:
+                return self.reply(401, {'error': 'Veuillez vous connecter.'})
+            if user[4] != 'admin':
+                return self.reply(403, {'error': 'Accès réservé à l’administrateur.'})
+            with connect() as db:
+                rows = db.execute('SELECT name,email FROM users ORDER BY id DESC').fetchall()
+            return self.reply(200, {'users': [{'name': row[0], 'email': row[1]} for row in rows]})
         if self.path == '/api/me':
             user = self.user()
-            return self.reply(200, {'user': {'name': user[1], 'email': user[2]}, 'data': json.loads(user[3])} if user else {'user': None})
+            return self.reply(200, {'user': {'name': user[1], 'email': user[2], 'role': user[4]}, 'data': json.loads(user[3])} if user else {'user': None})
         if self.path.split('?')[0] not in ('/', '/index.html', '/app.js', '/style.css', '/auth.js', '/favicon.ico', '/assets/residence-immogui.jpg', '/assets/maisons-locatives.jpg'):
             return self.reply(404, {'error': 'Page introuvable.'})
         super().do_GET()
