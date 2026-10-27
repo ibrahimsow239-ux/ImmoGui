@@ -85,3 +85,5 @@ footer{font-size:12px}
 nav a[hidden]{display:none}
 
 nav a{gap:12px;transition:background-color .18s,color .18s}nav .nav-icon{width:21px;height:21px;flex:0 0 21px;display:block}nav a:hover{background:#FAF2EB;color:#963E2E}nav a.active .nav-icon{stroke-width:1.9}
+
+.sidebar-backdrop{display:none;border:0;padding:0}.public-page>.sidebar-backdrop{display:none!important}@media(max-width:650px){.sidebar{z-index:30}.sidebar.open+.sidebar-backdrop{display:block;position:fixed;inset:0;background:rgba(39,30,24,.3);z-index:29;cursor:pointer}.sidebar{max-width:calc(100vw - 64px)}}
