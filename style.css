@@ -81,3 +81,5 @@ footer{font-size:12px}
 .property-actions .danger{color:#963E2E;border-color:#D6ABA0}
 
 .tenant-edit{display:block;margin-top:7px;padding:4px 0;font-size:12px;font-weight:500;color:#963E2E;text-decoration:underline;text-underline-offset:3px}
+
+nav a[hidden]{display:none}
