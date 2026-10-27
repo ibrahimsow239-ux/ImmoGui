@@ -54,3 +54,12 @@ if(formType==='property'){if(photoFile?.size){try{data.photo=await prepareProper
 const collection={property:'properties',tenant:'tenants',payment:'payments',expense:'expenses'}[formType];const previous=db[collection];if((formType==='property'||formType==='tenant')&&editingId){db[collection]=previous.map(p=>p.id===editingId?{...p,...data}:p)}else{db[collection]=[...previous,{id:uid(),...data}]}busy=true;try{await save()}catch{db[collection]=previous;$('#form-error').textContent='Sauvegarde impossible. Réessayez.';return}finally{busy=false}if(formType==='payment')month=data.month;if(formType==='expense')month=data.date.slice(0,7);$('#dialog').close();render();toast('Enregistrement effectué avec succès.')});
 function exportCSV(type){const rows=type==='payments'?[['Date','Locataire','Mois de loyer','Montant GNF'],...payments().map(p=>[p.date,tenant(p.tenant)?.name,p.month,p.amount])]:[['Date','Libellé','Bien','Catégorie','Montant GNF'],...expenses().map(e=>[e.date,e.label,property(e.property)?.name,e.category,e.amount])];const quote=v=>'"'+String(v??'').replace(/^[=+@\-]/,"'"+'$&').replace(/"/g,'""')+'"';const blob=new Blob(['\uFEFF'+rows.map(r=>r.map(quote).join(';')).join('\r\n')],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`immogui-${type}-${month}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Export CSV téléchargé.')}
 $('#close-dialog').onclick=$('#cancel').onclick=()=>$('#dialog').close();$('#menu').onclick=()=>$('.sidebar').classList.toggle('open');window.addEventListener('hashchange',render);render();
+
+function closeSidebar(){document.querySelector('.sidebar').classList.remove('open');document.querySelector('#menu').setAttribute('aria-expanded','false')}
+document.querySelector('#sidebar-backdrop').addEventListener('click',closeSidebar);
+document.querySelector('#menu').setAttribute('aria-controls','navigation-sidebar');
+document.querySelector('#menu').setAttribute('aria-expanded','false');
+document.querySelector('.sidebar').id='navigation-sidebar';
+document.querySelector('#menu').onclick=()=>{const open=document.querySelector('.sidebar').classList.toggle('open');document.querySelector('#menu').setAttribute('aria-expanded',String(open))};
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSidebar()});
+window.addEventListener('hashchange',closeSidebar);
