@@ -83,3 +83,5 @@ footer{font-size:12px}
 .tenant-edit{display:block;margin-top:7px;padding:4px 0;font-size:12px;font-weight:500;color:#963E2E;text-decoration:underline;text-underline-offset:3px}
 
 nav a[hidden]{display:none}
+
+nav a{gap:12px;transition:background-color .18s,color .18s}nav .nav-icon{width:21px;height:21px;flex:0 0 21px;display:block}nav a:hover{background:#FAF2EB;color:#963E2E}nav a.active .nav-icon{stroke-width:1.9}
