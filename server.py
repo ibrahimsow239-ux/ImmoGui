@@ -77,7 +77,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self.reply(403, {'error': 'Origine non autorisée.'})
         try:
             length = int(self.headers.get('Content-Length', 0))
-            if not 0 < length <= 2000000:
+            if not 0 < length <= 15000000:
                 return self.reply(413, {'error': 'Requête trop volumineuse.'})
             body = json.loads(self.rfile.read(length))
             if not isinstance(body, dict):
