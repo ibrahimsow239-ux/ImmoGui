@@ -36,6 +36,8 @@ with connect() as db:
 def import_account_from_environment():
     payload = os.environ.get('IMMOGUI_ACCOUNT_IMPORT', '')
     if not payload:
+        payload = ''.join(os.environ.get('IMMOGUI_ACCOUNT_IMPORT_' + str(i), '') for i in range(1, 17))
+    if not payload:
         return
     source = json.loads(zlib.decompress(base64.b64decode(payload, validate=True)))
     if set(source) != {'name', 'email', 'salt', 'password', 'data', 'role'}:
