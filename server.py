@@ -1,5 +1,7 @@
 """Serveur local immoGui : python3 server.py."""
 import hashlib
+import base64
+import zlib
 import hmac
 import json
 import os
@@ -30,6 +32,38 @@ with connect() as db:
     db.execute('CREATE TABLE IF NOT EXISTS auth_attempts (key TEXT, created INTEGER)')
     db.execute('CREATE INDEX IF NOT EXISTS auth_attempts_lookup ON auth_attempts(key,created)')
     db.execute('CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), expires INTEGER NOT NULL)')
+
+def import_account_from_environment():
+    payload = os.environ.get('IMMOGUI_ACCOUNT_IMPORT', '')
+    if not payload:
+        return
+    source = json.loads(zlib.decompress(base64.b64decode(payload, validate=True)))
+    if set(source) != {'name', 'email', 'salt', 'password', 'data', 'role'}:
+        raise ValueError('Invalid account import')
+    if source['role'] not in ('admin', 'partner') or not isinstance(json.loads(source['data']), dict):
+        raise ValueError('Invalid imported account')
+    fingerprint = hashlib.sha256(payload.encode()).hexdigest()
+    with connect() as db:
+        db.execute('CREATE TABLE IF NOT EXISTS account_imports (fingerprint TEXT PRIMARY KEY)')
+        if db.execute('SELECT 1 FROM account_imports WHERE fingerprint=?', (fingerprint,)).fetchone():
+            print('Account import already completed.', flush=True)
+            return
+        if db.execute('SELECT 1 FROM users WHERE lower(email)=?', (source['email'].lower(),)).fetchone():
+            raise ValueError('Account import refused: email already exists; no data changed')
+        backup = sqlite3.connect(str(DB) + '.before-account-import')
+        try:
+            # A separate read connection avoids backing up an active write transaction.
+            with connect() as original:
+                original.backup(backup)
+        finally:
+            backup.close()
+        db.execute('INSERT INTO users (name,email,salt,password,data,role) VALUES (?,?,?,?,?,?)',
+                   tuple(source[key] for key in ('name','email','salt','password','data','role')))
+        db.execute('INSERT INTO account_imports VALUES (?)', (fingerprint,))
+    data = json.loads(source['data'])
+    print('Account import completed: ' + json.dumps({key: len(data.get(key, [])) for key in EMPTY}), flush=True)
+
+import_account_from_environment()
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
