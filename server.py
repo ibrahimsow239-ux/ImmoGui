@@ -5,13 +5,14 @@ import zlib
 import hmac
 import json
 import os
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, unquote
 import secrets
 import sqlite3
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from http.cookies import SimpleCookie
+from domain import normalize, prepare_update, backup_document, restore_document, receipt_details, receipt_pdf
 
 ROOT = Path(__file__).resolve().parent
 DB = Path(os.environ.get('DATABASE_PATH', str(ROOT / 'immogui.sqlite3')))
@@ -31,6 +32,8 @@ with connect() as db:
         db.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'partner'")
     db.execute('CREATE TABLE IF NOT EXISTS auth_attempts (key TEXT, created INTEGER)')
     db.execute('CREATE INDEX IF NOT EXISTS auth_attempts_lookup ON auth_attempts(key,created)')
+    db.execute('CREATE TABLE IF NOT EXISTS backups (id TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), created INTEGER NOT NULL, reason TEXT NOT NULL, data TEXT NOT NULL)')
+    db.execute('CREATE INDEX IF NOT EXISTS backups_by_user ON backups(user_id,created)')
     db.execute('CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), expires INTEGER NOT NULL)')
 
 def import_account_from_environment():
@@ -66,6 +69,23 @@ def import_account_from_environment():
     print('Account import completed: ' + json.dumps({key: len(data.get(key, [])) for key in EMPTY}), flush=True)
 
 import_account_from_environment()
+
+def snapshot(db, user_id, data, reason):
+    db.execute('INSERT INTO backups VALUES (?,?,?,?,?)', (secrets.token_hex(16), user_id, time.time_ns(), reason, data))
+    # Cinquante versions par compte, y compris la sauvegarde avant restauration.
+    db.execute('DELETE FROM backups WHERE user_id=? AND id NOT IN (SELECT id FROM backups WHERE user_id=? ORDER BY created DESC LIMIT 50)', (user_id, user_id))
+
+
+def account_data(user_id):
+    with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        raw = db.execute('SELECT data FROM users WHERE id=?', (user_id,)).fetchone()[0]
+        data = normalize(json.loads(raw))
+        if data != json.loads(raw):
+            snapshot(db, user_id, raw, 'migration')
+            db.execute('UPDATE users SET data=? WHERE id=?', (json.dumps(data), user_id))
+    return data
+
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -111,7 +131,34 @@ class Handler(SimpleHTTPRequestHandler):
             return self.reply(200, {'users': [{'name': row[0], 'email': row[1]} for row in rows]})
         if self.path == '/api/me':
             user = self.user()
-            return self.reply(200, {'user': {'name': user[1], 'email': user[2], 'role': user[4]}, 'data': json.loads(user[3])} if user else {'user': None})
+            return self.reply(200, {'user': {'name': user[1], 'email': user[2], 'role': user[4]}, 'data': account_data(user[0])} if user else {'user': None})
+        if self.path in ('/api/backup', '/api/backups') or self.path.startswith('/api/receipts/'):
+            user = self.user()
+            if not user:
+                return self.reply(401, {'error': 'Veuillez vous connecter.'})
+            data = account_data(user[0])
+            if self.path == '/api/backup':
+                return self.reply(200, backup_document(data, user[2]))
+            if self.path == '/api/backups':
+                with connect() as db:
+                    rows = db.execute('SELECT id,created,reason FROM backups WHERE user_id=? ORDER BY created DESC', (user[0],)).fetchall()
+                return self.reply(200, {'backups': [{'id': row[0], 'created': row[1] // 1000000, 'reason': row[2]} for row in rows]})
+            try:
+                payment_id = unquote(self.path[len('/api/receipts/'):])
+                receipt = receipt_details(data, payment_id)
+            except KeyError:
+                return self.reply(404, {'error': 'Paiement introuvable dans votre compte.'})
+            content = receipt_pdf(receipt, user[1])
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/pdf')
+            self.send_header('Content-Length', str(len(content)))
+            filename = hashlib.sha256(payment_id.encode()).hexdigest()[:16]
+            self.send_header('Content-Disposition', f'attachment; filename="recu-{filename}.pdf"')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.end_headers()
+            self.wfile.write(content)
+            return
         if self.path.split('?')[0] not in ('/', '/index.html', '/app.js', '/style.css', '/auth.js', '/favicon.ico', '/assets/residence-immogui.jpg', '/assets/maisons-locatives.jpg'):
             return self.reply(404, {'error': 'Page introuvable.'})
         super().do_GET()
@@ -131,6 +178,8 @@ class Handler(SimpleHTTPRequestHandler):
                 raise ValueError()
         except (ValueError, json.JSONDecodeError):
             return self.reply(400, {'error': 'Données invalides.'})
+        if self.path in ('/api/forgot-password', '/api/verify-email'):
+            return self.reply(503, {'error': 'L’envoi d’emails n’est pas encore activé. Aucun message n’a été envoyé.'})
         if self.path in ('/api/signup', '/api/login'):
             ip = self.headers.get('X-Forwarded-For', '').split(',')[-1].strip() if PRODUCTION else self.client_address[0]
             key = hashlib.sha256(ip.encode()).hexdigest()
@@ -174,12 +223,33 @@ class Handler(SimpleHTTPRequestHandler):
             with connect() as db:
                 db.execute('DELETE FROM sessions WHERE user_id=?', (user[0],))
             return self.reply(200, {'ok': True}, 'session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0' + COOKIE_SECURITY)
-        if self.path == '/api/data':
-            if set(body) != set(EMPTY) or not all(isinstance(body[k], list) for k in EMPTY):
-                return self.reply(400, {'error': 'Format de données invalide.'})
-            with connect() as db:
-                db.execute('UPDATE users SET data=? WHERE id=?', (json.dumps(body), user[0]))
-            return self.reply(200, {'ok': True})
+        if self.path in ('/api/data', '/api/restore'):
+            try:
+                with connect() as db:
+                    db.execute('BEGIN IMMEDIATE')
+                    raw = db.execute('SELECT data FROM users WHERE id=?', (user[0],)).fetchone()[0]
+                    if self.path == '/api/data':
+                        data = prepare_update(body, json.loads(raw))
+                        reason = 'automatic'
+                    else:
+                        if 'backupId' in body:
+                            if not isinstance(body['backupId'], str):
+                                raise ValueError('Identifiant de sauvegarde invalide.')
+                            row = db.execute('SELECT data FROM backups WHERE id=? AND user_id=?', (body['backupId'], user[0])).fetchone()
+                            if not row:
+                                return self.reply(404, {'error': 'Sauvegarde introuvable dans votre compte.'})
+                            document = backup_document(json.loads(row[0]), user[2])
+                        else:
+                            document = body
+                        data = restore_document(document, user[2])
+                        reason = 'before-restore'
+                    serialized = json.dumps(data)
+                    if data != json.loads(raw) or reason == 'before-restore':
+                        snapshot(db, user[0], raw, reason)
+                        db.execute('UPDATE users SET data=? WHERE id=?', (serialized, user[0]))
+            except (ValueError, TypeError, KeyError) as error:
+                return self.reply(400, {'error': str(error) if isinstance(error, ValueError) else 'Format de données invalide.'})
+            return self.reply(200, {'ok': True, 'data': data})
         self.reply(404, {'error': 'Page introuvable.'})
 
 if __name__ == '__main__':

@@ -1,0 +1,37 @@
+const {readFileSync}=require('node:fs');
+const vm=require('node:vm');
+const assert=require('node:assert/strict');
+const source=readFileSync(require('node:path').join(__dirname,'../app.js'),'utf8');
+const context=vm.createContext({structuredClone,localStorage:{getItem:()=>null},console});
+vm.runInContext(source.slice(0,source.indexOf('function toast(')),context);
+vm.runInContext(`
+const sample={id:'test',rent:3100,leaseStart:'2026-01-16',leaseEnd:'2026-03-10',rentHistory:[{month:'2026-01',amount:3100},{month:'2026-03',amount:6200}]};
+`,context);
+const check=(expr,expected)=>assert.equal(vm.runInContext(expr,context),expected,expr);
+check("rentForMonth(sample,'2025-12')",0);
+check("rentForMonth(sample,'2026-01')",3100);
+check("rentForMonth(sample,'2026-02')",3100);
+check("rentForMonth(sample,'2026-03')",6200);
+check("rentForMonth(sample,'2026-04')",0);
+check("rentForMonth({rent:2900,leaseStart:'2024-02-29'},'2024-02')",2900);
+check("rentForMonth({rent:1234},'2020-01')",1234);
+check("rentForMonth({rent:100,leaseStart:'2026-01-31'},'2026-01')",100);
+check("leaseOverlaps({leaseEnd:'2026-01-31'},{leaseStart:'2026-02-01'})",false);
+check("leaseOverlaps({leaseEnd:'2026-02-01'},{leaseStart:'2026-02-01'})",true);
+check("validDate('2026-02-30')",false);
+check("validDate('2024-02-29')",true);
+vm.runInContext(`
+const old={id:'x',rent:1000,property:'p1',unit:'A'};
+const revised={...old,rent:2000,leaseStart:'',leaseEnd:'',deposit:'0',dueDay:'31',rentEffective:'2026-11'};
+prepareLease(revised,old);
+`,context);
+check("rentForMonth(revised,'2026-10')",1000);
+check("rentForMonth(revised,'2026-11')",2000);
+check('old.rent',1000);
+assert.throws(()=>vm.runInContext("prepareLease({...revised,rent:3000,rentEffective:'2026-10'},revised)",context),/postérieur/);
+vm.runInContext("db.payments=[{tenant:'x',month:'2026-12',amount:500}]",context);
+assert.throws(()=>vm.runInContext("prepareLease({...revised,rent:3000,rentEffective:'2026-12'},revised)",context),/paiement existe/);
+assert.throws(()=>vm.runInContext("prepareLease({...revised,leaseEnd:'2026-11-30'},revised)",context),/déjà encaissé/);
+assert.throws(()=>vm.runInContext("prepareLease({...revised,dueDay:32},revised)",context),/échéance/);
+check("rentForMonth({rent:1000,trackingStart:'2026-10'},'2026-09')",0);
+console.log('Vérifications bail/historique réussies');
