@@ -5,7 +5,7 @@ import zlib
 import hmac
 import json
 import os
-from urllib.parse import urlsplit, unquote
+from urllib.parse import urlsplit, unquote, parse_qs
 import secrets
 import sqlite3
 import time
@@ -120,6 +120,25 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/api/health':
             return self.reply(200, {'ok': True})
+        if urlsplit(self.path).path == '/api/export/monthly.xlsx':
+            user = self.user()
+            if not user:
+                return self.reply(401, {'error': 'Veuillez vous connecter.'})
+            month = parse_qs(urlsplit(self.path).query).get('month', [''])[0]
+            from excel_export import monthly_workbook
+            try:
+                content = monthly_workbook(account_data(user[0]), month, user[1])
+            except ValueError as error:
+                return self.reply(400, {'error': str(error)})
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            self.send_header('Content-Length', str(len(content)))
+            self.send_header('Content-Disposition', 'attachment; filename="immogui-bilan-' + month + '.xlsx"')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.end_headers()
+            self.wfile.write(content)
+            return
         if self.path == '/api/admin/users':
             user = self.user()
             if not user:

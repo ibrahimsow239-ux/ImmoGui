@@ -68,3 +68,11 @@ Les pages « Mot de passe oublié » et « Vérification de l’email » sont pr
 Validation : `node tests/leases.cjs` puis `python3 -m unittest discover -s tests -p 'test_*.py' -v`. Les tests HTTP démarrent un serveur et deux comptes dans une base temporaire ; l’inspection du PDF utilise `pdftotext` (outil de développement, pas une dépendance du serveur).
 
 Test facultatif du parcours mobile/bureau : avec Playwright et Chromium disponibles dans l’environnement de développement, lancer `node tests/browser.cjs`. Il utilise aussi une base temporaire et des comptes fictifs, télécharge un reçu PDF, change le tarif et restaure un fichier exporté. `PLAYWRIGHT_CHROMIUM_EXECUTABLE` permet d’indiquer un navigateur installé.
+
+## Export Excel mensuel
+
+Le bouton « Exporter le mois en Excel » est disponible sur le tableau de bord, les biens, les locataires, les loyers/paiements et les dépenses après connexion. Il produit un véritable classeur `.xlsx` du mois sélectionné pour le seul partenaire connecté. Les filtres des listes ne réduisent pas cet export complet.
+
+Sept onglets : Synthese (indicateurs), Loyers (attendu, affecté au mois, reste dû et excédents), Encaissements (versements reçus pendant le mois, selon leur date), Depenses, Biens (occupation du mois et trésorerie), Locataires (baux et cautions prévues) et Tarifs (historique). Tous les montants sont en GNF ; les dates sont des dates Excel et les téléphones restent du texte. Les sommes d'autres mois ne sont pas confondues avec les encaissements du mois. Les cautions ne sont pas ajoutées aux recettes. Les saisies utilisateur ne deviennent pas des formules Excel.
+
+Installer les dépendances avec `pip install -r requirements.txt`. Le Dockerfile le fait automatiquement.

@@ -65,7 +65,7 @@ class Workflow(unittest.TestCase):
         with response:
             self.assertEqual(response.status, expected, response.status)
             content = response.read()
-            return content if response.headers.get_content_type() == 'application/pdf' else json.loads(content)
+            return content if response.headers.get_content_type() in ('application/pdf', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') else json.loads(content)
 
     def test_accounts_receipts_and_restore(self):
         alice = self.client('alice@example.invalid')
@@ -85,7 +85,11 @@ class Workflow(unittest.TestCase):
         self.assertIn(b'600 GNF', first_pdf)
         pdf = Path(self.tmp.name)/'receipt.pdf'
         pdf.write_bytes(first_pdf)
-        text = subprocess.check_output(['pdftotext', str(pdf), '-']).decode()
+        try:
+            text = subprocess.check_output(['pdftotext', str(pdf), '-']).decode()
+        except FileNotFoundError:
+            from pypdf import PdfReader
+            text = '\n'.join(page.extract_text() for page in PdfReader(pdf).pages)
         self.assertIn('Locataire témoin', text)
         self.assertIn('400 GNF', text)
         data['payments'].append({'id':'versement-2','tenant':'t','amount':600,'date':'2026-01-17','month':'2026-01'})
@@ -154,6 +158,21 @@ class Workflow(unittest.TestCase):
         migrated['tenants'][0]['unit'] = ''
         self.request(client, 'data', migrated)
 
+    def test_excel_is_scoped_to_connected_partner(self):
+        from openpyxl import load_workbook
+        import io
+        alice = self.client('excel-alice@example.invalid')
+        bob = self.client('excel-bob@example.invalid')
+        data = {'properties':[{'id':'p','name':'Bien Excel','address':'Conakry','units':2,'type':'Appartements'}], 'tenants':[], 'payments':[], 'expenses':[]}
+        self.request(alice,'data',data)
+        self.request(urllib.request.build_opener(),'export/monthly.xlsx?month=2026-10',expected=401)
+        self.request(alice,'export/monthly.xlsx?month=2026-99',expected=400)
+        content = self.request(alice,'export/monthly.xlsx?month=2026-10')
+        workbook = load_workbook(io.BytesIO(content),data_only=True)
+        self.assertEqual(workbook['Biens']['A7'].value,'Bien Excel')
+        other = load_workbook(io.BytesIO(self.request(bob,'export/monthly.xlsx?month=2026-10')),data_only=True)
+        self.assertEqual(other['Synthese']['B14'].value,0)
+
     def test_whole_month_and_legacy_tracking(self):
         t = {'rent':3100,'trackingStart':'2026-01','leaseStart':'2026-01-31','leaseEnd':'2026-02-01'}
         self.assertEqual(rent_for_month(t, '2026-01'), 3100)
@@ -170,3 +189,4 @@ class Workflow(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
